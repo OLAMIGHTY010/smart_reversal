@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
   ShieldAlert,
@@ -9,6 +9,8 @@ import {
   Square,
   XOctagon,
   Layers,
+  Plus,
+  X,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { Button } from '../components/Button';
@@ -18,16 +20,22 @@ import { IrreversibleConfirmDialog } from '../components/IrreversibleConfirmDial
 import { ReversalDetailDrawer } from './reversals/ReversalDetailDrawer';
 import { useApp } from '../context/AppContext';
 import { apiClient } from '../services/apiClient';
-import { INITIAL_REVERSALS } from '../services/mockSimulatorData';
 import type { ReversalProposal, ReversalDetailRecord } from '../types/domain';
 
 type StatusFilter = 'ALL' | 'approval' | 'resolved' | 'failed';
 
 export const ReversalsView: React.FC = () => {
-  const { role, addToast } = useApp();
-  const [reversals, setReversals] = useState<ReversalProposal[]>(() => INITIAL_REVERSALS);
+  const { role, addToast, selectedTransactionId, setSelectedTransactionId } = useApp();
+  const [reversals, setReversals] = useState<ReversalProposal[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('approval');
+
+  // Draft Proposal State (Maker Step)
+  const [isDraftOpen, setIsDraftOpen] = useState(false);
+  const [draftTxnId, setDraftTxnId] = useState('');
+  const [draftReasonCode, setDraftReasonCode] = useState('SWITCH_TIMEOUT');
+  const [draftJustification, setDraftJustification] = useState('');
+  const [isSubmittingDraft, setIsSubmittingDraft] = useState(false);
 
   // Batch Selection State
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -44,9 +52,37 @@ export const ReversalsView: React.FC = () => {
   const [pendingAction, setPendingAction] = useState<{ id: string; decision: 'APPROVE' | 'REJECT'; notes?: string } | null>(null);
 
   const fetchReversals = async () => {
-    const list = await apiClient.getReversals();
-    setReversals(list);
+    try {
+      const list = await apiClient.getReversals();
+      setReversals(list);
+    } catch {
+      // silent
+    }
   };
+
+  useEffect(() => {
+    let isMounted = true;
+    fetchReversals();
+
+    const handleLiveSync = () => {
+      if (isMounted) fetchReversals();
+    };
+
+    window.addEventListener('smartreversal:new_reversal', handleLiveSync);
+    window.addEventListener('smartreversal:case_resolved', handleLiveSync);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('smartreversal:new_reversal', handleLiveSync);
+      window.removeEventListener('smartreversal:case_resolved', handleLiveSync);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (selectedTransactionId) {
+      setDraftTxnId(selectedTransactionId);
+      setIsDraftOpen(true);
+    }
+  }, [selectedTransactionId]);
 
   const handleOpenDetail = async (proposal: ReversalProposal) => {
     const detail = await apiClient.getReversalDetail(proposal.id);
@@ -97,8 +133,8 @@ export const ReversalsView: React.FC = () => {
     });
     addToast({
       type: 'success',
-      title: 'Reversal Dispatched & Settled',
-      message: 'Dual-control authorization complete. Reversal payload dispatched to Core Switch.',
+      title: 'Reversal Authorized — Removed From Queue',
+      message: 'Dual-control authorization complete. Item has left the pending queue and customer has been notified that their issue is resolved.',
     });
     setPendingAction(null);
     setIsDetailOpen(false);
@@ -155,8 +191,8 @@ export const ReversalsView: React.FC = () => {
     });
     addToast({
       type: 'success',
-      title: 'Batch Reversals Dispatched & Settled',
-      message: `Batch authorization complete: ${selectedIds.length} proposals totaling ₦${totalBatchExposure.toLocaleString('en-US', { minimumFractionDigits: 2 })} dispatched to Core Banking Switch.`,
+      title: 'Batch Reversals Authorized — Removed From Queue',
+      message: `Batch authorization complete: ${selectedIds.length} proposals totaling ₦${totalBatchExposure.toLocaleString('en-US', { minimumFractionDigits: 2 })} have left the pending queue. Customer portal notified that issues are resolved.`,
     });
     setSelectedIds([]);
     setIsBatchIrreversibleOpen(false);
@@ -185,13 +221,45 @@ export const ReversalsView: React.FC = () => {
     fetchReversals();
   };
 
+  const handleCreateProposal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!draftTxnId.trim()) return;
+    setIsSubmittingDraft(true);
+    try {
+      await apiClient.proposeReversal({
+        transactionId: draftTxnId.trim(),
+        reasonCode: draftReasonCode,
+        justification: draftJustification || 'Discrepancy confirmed during investigation.',
+        proposedBy: `Analyst (${role})`,
+      });
+      addToast({
+        type: 'success',
+        title: 'Reversal Proposal Submitted',
+        message: `Dual-control proposal submitted for ${draftTxnId}. Awaiting supervisor authorization.`,
+      });
+      setIsDraftOpen(false);
+      setDraftTxnId('');
+      setDraftJustification('');
+      setSelectedTransactionId(null);
+      fetchReversals();
+    } catch (err: any) {
+      addToast({
+        type: 'error',
+        title: 'Submission Failed',
+        message: err.message || 'Could not draft reversal proposal.',
+      });
+    } finally {
+      setIsSubmittingDraft(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       {/* 1. Header Info Bar */}
       <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[var(--surface)] border border-[var(--surface-border)] rounded-md shadow-xs">
         <div>
           <h2 className="text-[16px] font-bold text-[var(--text-primary)] flex items-center gap-2">
-            <ShieldAlert className="w-5 h-5 text-purple-700" />
+            <ShieldAlert className="w-5 h-5 text-sky-600" />
             <span>Reversal Queue, Audit Dossier & Dual-Control Approval</span>
           </h2>
           <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
@@ -200,6 +268,16 @@ export const ReversalsView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          {!isChecker && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setIsDraftOpen(true)}
+              leftIcon={<Plus className="w-4 h-4" />}
+            >
+              Draft Reversal Proposal
+            </Button>
+          )}
           <div className="text-[12px] px-3 py-1 bg-[var(--canvas-subdued)] border border-[var(--surface-border)] rounded font-mono-financial">
             Active Role: <strong className="text-[var(--text-primary)]">{role}</strong>
           </div>
@@ -277,7 +355,7 @@ export const ReversalsView: React.FC = () => {
               className={clsx(
                 'px-2.5 py-1 rounded font-semibold cursor-pointer transition-colors',
                 statusFilter === 'ALL'
-                  ? 'bg-purple-700 text-white shadow-xs'
+                  ? 'bg-sky-600 text-white shadow-xs'
                   : 'bg-[var(--surface)] text-[var(--text-secondary)] border border-[var(--surface-border)] hover:bg-[var(--surface-raised)]'
               )}
             >
@@ -289,7 +367,7 @@ export const ReversalsView: React.FC = () => {
               className={clsx(
                 'px-2.5 py-1 rounded font-semibold cursor-pointer transition-colors',
                 statusFilter === 'approval'
-                  ? 'bg-purple-700 text-white shadow-xs'
+                  ? 'bg-sky-600 text-white shadow-xs'
                   : 'bg-[var(--surface)] text-[var(--text-secondary)] border border-[var(--surface-border)] hover:bg-[var(--surface-raised)]'
               )}
             >
@@ -301,7 +379,7 @@ export const ReversalsView: React.FC = () => {
               className={clsx(
                 'px-2.5 py-1 rounded font-semibold cursor-pointer transition-colors',
                 statusFilter === 'resolved'
-                  ? 'bg-purple-700 text-white shadow-xs'
+                  ? 'bg-sky-600 text-white shadow-xs'
                   : 'bg-[var(--surface)] text-[var(--text-secondary)] border border-[var(--surface-border)] hover:bg-[var(--surface-raised)]'
               )}
             >
@@ -313,7 +391,7 @@ export const ReversalsView: React.FC = () => {
               className={clsx(
                 'px-2.5 py-1 rounded font-semibold cursor-pointer transition-colors',
                 statusFilter === 'failed'
-                  ? 'bg-purple-700 text-white shadow-xs'
+                  ? 'bg-sky-600 text-white shadow-xs'
                   : 'bg-[var(--surface)] text-[var(--text-secondary)] border border-[var(--surface-border)] hover:bg-[var(--surface-raised)]'
               )}
             >
@@ -349,7 +427,7 @@ export const ReversalsView: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Filter by ref, reason, account..."
-              className="pl-8 pr-3 py-1.5 bg-[var(--surface)] border border-[var(--surface-border)] rounded text-[12px] font-mono-financial focus:outline-none focus:ring-1 focus:ring-purple-500 w-64"
+              className="pl-8 pr-3 py-1.5 bg-[var(--surface)] border border-[var(--surface-border)] rounded text-[12px] font-mono-financial focus:outline-none focus:ring-1 focus:ring-sky-500 w-64"
             />
           </div>
         </div>
@@ -357,8 +435,18 @@ export const ReversalsView: React.FC = () => {
         {/* Proposals List */}
         <div className="divide-y divide-[var(--surface-border-subtle)]">
           {filteredReversals.length === 0 ? (
-            <div className="p-8 text-center text-[var(--text-muted)] text-[13px]">
-              No reversal proposals match the selected filters.
+            <div className="p-10 text-center space-y-2 text-[13px]">
+              <ShieldCheck className="w-8 h-8 text-emerald-600 mx-auto opacity-75" />
+              <div className="font-semibold text-[var(--text-primary)]">
+                {statusFilter === 'approval'
+                  ? 'No Reversal Proposals Pending Authorization'
+                  : 'No Reversal Proposals in Selected View'}
+              </div>
+              <p className="text-[var(--text-muted)] text-[12px] max-w-sm mx-auto">
+                {statusFilter === 'approval'
+                  ? 'The dual-control supervisor queue is clean. When maker analysts propose a reversal, it will appear here immediately for review.'
+                  : 'Switch queue filter or draft a new reversal to inspect operational records.'}
+              </p>
             </div>
           ) : (
             filteredReversals.map((rev) => {
@@ -496,6 +584,116 @@ export const ReversalsView: React.FC = () => {
         confirmKeyword="CONFIRM BATCH"
         actionButtonText={`Permanently Execute Batch (${selectedIds.length})`}
       />
+
+      {/* Screen 10: Draft Reversal Proposal Modal (Maker Step) */}
+      {isDraftOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="draft-reversal-title"
+        >
+          <div className="w-full max-w-md bg-[var(--surface)] border border-[var(--surface-border)] rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="p-4 border-b border-[var(--surface-border)] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-md bg-sky-50 dark:bg-sky-950 text-sky-600">
+                  <ShieldAlert className="w-4 h-4" />
+                </span>
+                <h3 id="draft-reversal-title" className="text-[15px] font-bold text-[var(--text-primary)]">
+                  Draft Reversal Proposal
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsDraftOpen(false);
+                  setSelectedTransactionId(null);
+                }}
+                className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateProposal} className="p-4 space-y-4 text-[13px]">
+              <div className="space-y-1.5">
+                <label className="block text-[12px] font-semibold text-[var(--text-secondary)]">
+                  Target Transaction ID or Dispute Reference *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={draftTxnId}
+                  onChange={(e) => setDraftTxnId(e.target.value)}
+                  placeholder="e.g. REF-NIP-2026-004417 or tx-cus-..."
+                  className="w-full px-3 py-2 bg-[var(--canvas-subdued)] border border-[var(--surface-border)] rounded-md font-mono-financial text-[12px] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-sky-500"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[12px] font-semibold text-[var(--text-secondary)]">
+                  Reversal Reason Code *
+                </label>
+                <select
+                  value={draftReasonCode}
+                  onChange={(e) => setDraftReasonCode(e.target.value)}
+                  className="w-full px-3 py-2 bg-[var(--canvas-subdued)] border border-[var(--surface-border)] rounded-md text-[12px] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-sky-500"
+                >
+                  <option value="SWITCH_TIMEOUT">SWITCH_TIMEOUT — Counterparty Timeout Without Credit</option>
+                  <option value="DUPLICATE_DEBIT">DUPLICATE_DEBIT — Verified Double Processing</option>
+                  <option value="CUSTOMER_CLAIM_VERIFIED">CUSTOMER_CLAIM_VERIFIED — Customer Debit Dispute Validated</option>
+                  <option value="LATE_REVERSAL">LATE_REVERSAL — Settlement Auto-Reversal Window Breached</option>
+                  <option value="INCORRECT_AMOUNT">INCORRECT_AMOUNT — Discrepancy in Ledger Debit Amount</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[12px] font-semibold text-[var(--text-secondary)]">
+                  Investigation Justification & Evidence Summary *
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={draftJustification}
+                  onChange={(e) => setDraftJustification(e.target.value)}
+                  placeholder="Provide audit-trail rationale. E.g. Telemetry confirms debit from core ledger, but switch responded code 91 timeout. Beneficiary institution confirms non-credit."
+                  className="w-full px-3 py-2 bg-[var(--canvas-subdued)] border border-[var(--surface-border)] rounded-md text-[12px] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-sky-500"
+                />
+              </div>
+
+              <div className="p-2.5 rounded-md bg-[var(--canvas-subdued)] border border-[var(--surface-border)] text-[11px] text-[var(--text-muted)] space-y-1">
+                <div className="font-semibold text-[var(--text-secondary)]">Dual-Control Compliance Check</div>
+                <p>
+                  As an Analyst Maker, this submission initiates an 8-point safety check and routes to the Supervisor Checker queue for dual authorization.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--surface-border)]">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setIsDraftOpen(false);
+                    setSelectedTransactionId(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  disabled={isSubmittingDraft || !draftTxnId.trim()}
+                  leftIcon={<ShieldAlert className="w-3.5 h-3.5" />}
+                >
+                  {isSubmittingDraft ? 'Submitting Proposal...' : 'Submit to Supervisor Queue'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
