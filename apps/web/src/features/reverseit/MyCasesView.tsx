@@ -5,12 +5,10 @@ import {
   Plus,
   Search,
   AlertCircle,
-  Sparkles,
   ShieldCheck,
 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import type { CustomerDisputeCase } from './reverseitTypes';
-import { INITIAL_CUSTOMER_CASES } from './reverseitData';
 
 export interface MyCasesViewProps {
   cases: CustomerDisputeCase[];
@@ -25,10 +23,9 @@ export const MyCasesView: React.FC<MyCasesViewProps> = ({
 }) => {
   const [trackingQuery, setTrackingQuery] = useState('');
   const [lookupError, setLookupError] = useState<string | null>(null);
-  const [demoCases, setDemoCases] = useState<CustomerDisputeCase[]>([]);
 
-  // Combined list: real cases from session + any loaded demo cases
-  const displayedCases = [...cases, ...demoCases];
+  // Live cases submitted by customer
+  const displayedCases = cases;
 
   const handleLookup = (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,19 +33,12 @@ export const MyCasesView: React.FC<MyCasesViewProps> = ({
     if (!query) return;
 
     // Search within customer's own reports first, then match by exact tracking ID / Case reference
-    const found =
-      displayedCases.find(
-        (c) =>
-          c.caseNumber.toLowerCase() === query ||
-          c.trackingId.toLowerCase() === query ||
-          c.reference.toLowerCase() === query
-      ) ||
-      INITIAL_CUSTOMER_CASES.find(
-        (c) =>
-          c.caseNumber.toLowerCase() === query ||
-          c.trackingId.toLowerCase() === query ||
-          c.reference.toLowerCase() === query
-      );
+    const found = displayedCases.find(
+      (c) =>
+        c.caseNumber.toLowerCase() === query ||
+        c.trackingId.toLowerCase() === query ||
+        c.reference.toLowerCase() === query
+    );
 
     if (found) {
       setLookupError(null);
@@ -56,10 +46,6 @@ export const MyCasesView: React.FC<MyCasesViewProps> = ({
     } else {
       setLookupError('No dispute case found matching that Tracking ID or Case Reference.');
     }
-  };
-
-  const handleLoadSampleCases = () => {
-    setDemoCases(INITIAL_CUSTOMER_CASES);
   };
 
   return (
@@ -135,14 +121,6 @@ export const MyCasesView: React.FC<MyCasesViewProps> = ({
             <Button variant="primary" size="md" onClick={onStartNewReport}>
               Report a Transaction Problem &rarr;
             </Button>
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={handleLoadSampleCases}
-              leftIcon={<Sparkles className="w-4 h-4 text-sky-600" />}
-            >
-              Load Interactive Demo Cases
-            </Button>
           </div>
         </div>
       ) : (
@@ -175,15 +153,31 @@ export const MyCasesView: React.FC<MyCasesViewProps> = ({
                   <span className="text-[20px] font-extrabold font-mono-financial text-[var(--text-primary)] block">
                     {c.currency} {c.amount}
                   </span>
-                  <span className="text-[11px] font-semibold text-sky-800 bg-sky-50 px-2.5 py-0.5 rounded-full border border-sky-200 inline-block mt-0.5">
-                    {c.statusLabel}
+                  <span
+                    className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border inline-block mt-0.5 ${
+                      c.status === 'VERIFIED_RESOLVED'
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300'
+                        : 'bg-sky-50 text-sky-800 border-sky-200'
+                    }`}
+                  >
+                    {c.status === 'VERIFIED_RESOLVED' ? '✓ ' + c.statusLabel : c.statusLabel}
                   </span>
                 </div>
               </div>
 
               {/* Status summary box */}
-              <div className="p-3 rounded-xl bg-[var(--canvas-subdued)] border border-[var(--surface-border-subtle)] text-[12px] text-[var(--text-secondary)] flex items-start gap-2.5">
-                <ShieldCheck className="w-4 h-4 text-sky-700 shrink-0 mt-0.5" />
+              <div
+                className={`p-3 rounded-xl border text-[12px] flex items-start gap-2.5 ${
+                  c.status === 'VERIFIED_RESOLVED'
+                    ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950 dark:bg-emerald-950/20 dark:border-emerald-800 dark:text-emerald-200'
+                    : 'bg-[var(--canvas-subdued)] border-[var(--surface-border-subtle)] text-[var(--text-secondary)]'
+                }`}
+              >
+                <ShieldCheck
+                  className={`w-4 h-4 shrink-0 mt-0.5 ${
+                    c.status === 'VERIFIED_RESOLVED' ? 'text-emerald-600' : 'text-sky-700'
+                  }`}
+                />
                 <span className="leading-relaxed">{c.customerSafeStatusText}</span>
               </div>
 
