@@ -50,23 +50,141 @@ export interface ServiceTierStatus {
   simulationFallbackActive: boolean;
 }
 
-// In-memory reactive state for simulator
 const LIVE_CUSTOMER_EXCEPTIONS_KEY = 'smartreversal_live_customer_exceptions';
+const LIVE_REVERSALS_KEY = 'smartreversal_live_reversals';
+const LIVE_INVESTIGATIONS_KEY = 'smartreversal_live_investigations';
+const LIVE_TRANSACTIONS_KEY = 'smartreversal_live_transactions';
+const LIVE_AUDIT_KEY = 'smartreversal_live_audit_trail';
 
-function getStoredCustomerExceptions(): FinancialException[] {
+function getStoredLiveItems<T>(key: string): T[] {
   try {
-    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LIVE_CUSTOMER_EXCEPTIONS_KEY) : null;
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
   }
 }
 
-let transactions = [...INITIAL_TRANSACTIONS];
-let exceptions = [...getStoredCustomerExceptions(), ...INITIAL_EXCEPTIONS];
-let investigations = [...INITIAL_INVESTIGATIONS];
-let reversals = [...INITIAL_REVERSALS];
-let auditTrail = [...INITIAL_AUDIT_TRAIL];
+function saveStoredLiveItems<T>(key: string, items: T[]) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, JSON.stringify(items));
+    }
+  } catch {
+    // silent
+  }
+}
+
+function getStoredCustomerExceptions(): FinancialException[] {
+  return getStoredLiveItems<FinancialException>(LIVE_CUSTOMER_EXCEPTIONS_KEY);
+}
+
+function syncCustomerCaseResolved(prop: ReversalProposal) {
+  if (typeof window === 'undefined') return;
+
+  const caseKeys = ['smartreversal_customer_my_cases', 'smartreversal_customer_cases'];
+  for (const key of caseKeys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const cases = JSON.parse(raw);
+        let modified = false;
+        const updatedCases = cases.map((c: any) => {
+          const isMatch =
+            c.id === prop.reference ||
+            c.reference === prop.reference ||
+            c.id === prop.transactionId ||
+            c.instructionRef === prop.reference ||
+            c.parsedDetails?.reference === prop.reference ||
+            (prop.reference && c.id && c.id.includes(prop.reference.replace(/[^0-9]/g, ''))) ||
+            (prop.reference && c.history?.some((h: any) => h.details?.includes(prop.reference))) ||
+            cases.length === 1;
+
+          if (isMatch) {
+            modified = true;
+            return {
+              ...c,
+              status: 'VERIFIED_RESOLVED',
+              statusLabel: 'Resolved & Refund Settled',
+              customerSafeStatusText: `Good news! Your dispute has been authorized by the bank supervisor. A full refund of ${prop.currency} ${Number(prop.reversalAmount).toLocaleString('en-US', { minimumFractionDigits: 2 })} has been dispatched to your account.`,
+              resolvedAt: new Date().toISOString(),
+              isOverdue: false,
+              history: [
+                ...(c.history || []).map((h: any) =>
+                  h.stage === 'VERIFIED_RESOLVED' || h.stage === 'REVERSAL_INITIATED'
+                    ? { ...h, verified: true, timestamp: new Date().toLocaleTimeString() + ' WAT' }
+                    : h
+                ),
+                {
+                  stage: 'VERIFIED_RESOLVED',
+                  label: 'Reversal Authorized by Supervisor',
+                  timestamp: new Date().toLocaleTimeString() + ' WAT',
+                  details: `Reversal of ${prop.currency} ${prop.reversalAmount} authorized by Supervisor. Dispatched to Core Banking Switch.`,
+                  verified: true,
+                },
+              ],
+            };
+          }
+          return c;
+        });
+
+        if (modified) {
+          localStorage.setItem(key, JSON.stringify(updatedCases));
+        }
+      }
+    } catch {
+      // silent
+    }
+  }
+
+  // Update in-memory customer exceptions stored in localStorage
+  try {
+    const stored = getStoredCustomerExceptions();
+    if (stored.length > 0) {
+      const updatedStored = stored.map((e) =>
+        e.reference === prop.reference || e.transactionId === prop.transactionId
+          ? { ...e, status: 'resolved' as FinancialStatus }
+          : e
+      );
+      saveStoredLiveItems(LIVE_CUSTOMER_EXCEPTIONS_KEY, updatedStored);
+    }
+  } catch {
+    // silent
+  }
+
+  // Dispatch real-time custom event across the window to notify customer UI
+  window.dispatchEvent(
+    new CustomEvent('smartreversal:case_resolved', {
+      detail: {
+        reference: prop.reference,
+        amount: prop.reversalAmount,
+        currency: prop.currency,
+        authorizedBy: prop.authorizedBy,
+        timestamp: new Date().toISOString(),
+      },
+    })
+  );
+}
+
+const isTestEnv =
+  (typeof globalThis !== 'undefined' && (Boolean((globalThis as any).process?.env?.NODE_ENV === 'test') || Boolean((globalThis as any).process?.env?.VITEST))) ||
+  (typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.MODE === 'test'));
+
+let transactions: Transaction[] = isTestEnv
+  ? [...INITIAL_TRANSACTIONS]
+  : getStoredLiveItems<Transaction>(LIVE_TRANSACTIONS_KEY);
+let exceptions: FinancialException[] = isTestEnv
+  ? [...INITIAL_EXCEPTIONS]
+  : getStoredLiveItems<FinancialException>(LIVE_CUSTOMER_EXCEPTIONS_KEY);
+let investigations: InvestigationCase[] = isTestEnv
+  ? [...INITIAL_INVESTIGATIONS]
+  : getStoredLiveItems<InvestigationCase>(LIVE_INVESTIGATIONS_KEY);
+let reversals: ReversalProposal[] = isTestEnv
+  ? [...INITIAL_REVERSALS]
+  : getStoredLiveItems<ReversalProposal>(LIVE_REVERSALS_KEY);
+let auditTrail: AuditEvent[] = isTestEnv
+  ? [...INITIAL_AUDIT_TRAIL]
+  : getStoredLiveItems<AuditEvent>(LIVE_AUDIT_KEY);
 const reconciliationRuns = [...RECONCILIATION_RUNS];
 
 let currentAuthToken: string | null = null;
@@ -403,15 +521,34 @@ export const apiClient = {
     const stored = getStoredCustomerExceptions();
     const filtered = stored.filter((e) => e.id !== newExc.id && e.reference !== newExc.reference);
     const updated = [newExc, ...filtered];
-    try {
-      localStorage.setItem(LIVE_CUSTOMER_EXCEPTIONS_KEY, JSON.stringify(updated));
-    } catch {
-      // silent
-    }
+    saveStoredLiveItems(LIVE_CUSTOMER_EXCEPTIONS_KEY, updated);
 
     // Prepend to in-memory exceptions
     if (!exceptions.some((e) => e.id === newExc.id || e.reference === newExc.reference)) {
       exceptions = [newExc, ...exceptions];
+    }
+
+    // Also create matching live transaction so analyst and supervisor can query and resolve
+    const newTxn: Transaction = {
+      id: newExc.transactionId,
+      reference: newExc.reference,
+      rrn: newExc.rrn || newExc.reference,
+      stan: '000000',
+      amount: newExc.amount,
+      currency: newExc.currency,
+      channel: newExc.channel,
+      status: newExc.status,
+      senderAccount: newExc.accountNumber || '0012345678',
+      beneficiaryAccount: '0098765432',
+      senderBank: 'Originating Bank',
+      beneficiaryBank: 'Beneficiary Bank',
+      createdAt: newExc.detectedAt,
+      hasDiscrepancy: true,
+      isVerified: true,
+    };
+    if (!transactions.some((t) => t.id === newTxn.id || t.reference === newTxn.reference)) {
+      transactions = [newTxn, ...transactions];
+      saveStoredLiveItems(LIVE_TRANSACTIONS_KEY, transactions);
     }
 
     // Also create matching investigation case so analyst can inspect it in Investigations tab
@@ -447,14 +584,28 @@ export const apiClient = {
       aiSuggestedRootCause: newExc.rootCause,
       isRootCauseConfirmed: false,
       ledgerPostings: [],
-      relatedTransactions: [],
+      relatedTransactions: [
+        {
+          id: newTxn.id,
+          reference: newTxn.reference,
+          amount: newTxn.amount,
+          currency: newTxn.currency,
+          channel: newTxn.channel,
+          status: newTxn.status,
+          relation: 'DISPUTED_TRANSACTION',
+          timestamp: newTxn.createdAt,
+        },
+      ],
       relatedCases: [],
       killSwitchActive: false,
       proposedAction: 'Initiate counterparty query or reversal approval under dual control',
       aiSuggestedRemedy: newExc.modelExplanation,
       modelConfidence: newExc.modelConfidence,
     };
-    investigations = [newInv, ...investigations];
+    if (!investigations.some((i) => i.id === newInv.id || i.reference === newInv.reference)) {
+      investigations = [newInv, ...investigations];
+      saveStoredLiveItems(LIVE_INVESTIGATIONS_KEY, investigations);
+    }
 
     // Emit live custom event for reactive real-time UI updates
     if (typeof window !== 'undefined') {
@@ -921,8 +1072,34 @@ export const apiClient = {
 
   // POST /reversals/propose (Maker Step)
   async proposeReversal(payload: ProposeReversalParams): Promise<ReversalProposal> {
-    const txn = transactions.find((t) => t.id === payload.transactionId);
-    if (!txn) throw new Error('Transaction not found');
+    let txn = transactions.find((t) => t.id === payload.transactionId);
+    if (!txn) {
+      // Find matching exception if txn is not yet in transactions array
+      const exc = exceptions.find((e) => e.transactionId === payload.transactionId || e.id === payload.transactionId || e.reference === payload.transactionId);
+      if (exc) {
+        txn = {
+          id: exc.transactionId,
+          reference: exc.reference,
+          rrn: exc.rrn || exc.reference,
+          stan: '000000',
+          amount: exc.amount,
+          currency: exc.currency,
+          channel: exc.channel,
+          status: 'approval',
+          senderAccount: exc.accountNumber || '0012345678',
+          beneficiaryAccount: '0098765432',
+          senderBank: 'Originating Bank',
+          beneficiaryBank: 'Beneficiary Bank',
+          createdAt: exc.detectedAt,
+          hasDiscrepancy: true,
+          isVerified: true,
+        };
+        transactions = [txn, ...transactions];
+        saveStoredLiveItems(LIVE_TRANSACTIONS_KEY, transactions);
+      } else {
+        throw new Error('Transaction or Exception not found');
+      }
+    }
 
     const newProposal: ReversalProposal = {
       id: `rev-prop-${Date.now()}`,
@@ -937,17 +1114,25 @@ export const apiClient = {
       proposedAt: new Date().toISOString(),
       reasonCode: payload.reasonCode,
       justification: payload.justification,
-      idempotencyKey: `idemp_${txn.reference.toLowerCase()}_${Math.random().toString(36).substring(2, 9)}`,
+      idempotencyKey: `idemp_${txn.reference.toLowerCase().replace(/[^a-z0-9]/g, '')}_${Math.random().toString(36).substring(2, 9)}`,
       destinationAccount: txn.senderAccount,
       destinationBank: txn.senderBank,
     };
 
     reversals = [newProposal, ...reversals];
+    saveStoredLiveItems(LIVE_REVERSALS_KEY, reversals);
 
     // Update transaction status
     transactions = transactions.map((t) =>
-      t.id === txn.id ? { ...t, status: 'approval' } : t
+      t.id === txn!.id ? { ...t, status: 'approval' as FinancialStatus } : t
     );
+    saveStoredLiveItems(LIVE_TRANSACTIONS_KEY, transactions);
+
+    // Update exception status if exists
+    exceptions = exceptions.map((e) =>
+      e.transactionId === txn!.id || e.reference === txn!.reference ? { ...e, status: 'approval' as FinancialStatus } : e
+    );
+    saveStoredLiveItems(LIVE_CUSTOMER_EXCEPTIONS_KEY, exceptions);
 
     // Audit Event
     auditTrail = [
@@ -966,8 +1151,107 @@ export const apiClient = {
       },
       ...auditTrail,
     ];
+    saveStoredLiveItems(LIVE_AUDIT_KEY, auditTrail);
+
+    // Dispatch event so supervisor view updates live
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('smartreversal:new_reversal', { detail: newProposal }));
+    }
 
     return newProposal;
+  },
+
+  // POST /reversals/batch-propose (Maker Step - High-Volume Scale Triage)
+  async batchProposeReversals(payload: {
+    exceptionIds: string[];
+    proposedBy: string;
+    reasonCode: string;
+    justification: string;
+  }): Promise<ReversalProposal[]> {
+    const proposals: ReversalProposal[] = [];
+
+    for (const excId of payload.exceptionIds) {
+      const exc = exceptions.find((e) => e.id === excId || e.reference === excId);
+      if (!exc) continue;
+
+      let txn = transactions.find((t) => t.id === exc.transactionId || t.reference === exc.reference);
+      if (!txn) {
+        txn = {
+          id: exc.transactionId,
+          reference: exc.reference,
+          rrn: exc.rrn || exc.reference,
+          stan: '000000',
+          amount: exc.amount,
+          currency: exc.currency,
+          channel: exc.channel,
+          status: 'approval',
+          senderAccount: exc.accountNumber || '0012345678',
+          beneficiaryAccount: '0098765432',
+          senderBank: 'Originating Bank',
+          beneficiaryBank: 'Beneficiary Bank',
+          createdAt: exc.detectedAt,
+          hasDiscrepancy: true,
+          isVerified: true,
+        };
+        transactions = [txn, ...transactions];
+      }
+
+      const newProposal: ReversalProposal = {
+        id: `rev-prop-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        transactionId: txn.id,
+        reference: txn.reference,
+        originalAmount: txn.amount,
+        reversalAmount: txn.amount,
+        currency: txn.currency,
+        channel: txn.channel,
+        status: 'approval',
+        proposedBy: payload.proposedBy,
+        proposedAt: new Date().toISOString(),
+        reasonCode: payload.reasonCode,
+        justification: payload.justification,
+        idempotencyKey: `idemp_${txn.reference.toLowerCase().replace(/[^a-z0-9]/g, '')}_${Math.random().toString(36).substring(2, 9)}`,
+        destinationAccount: txn.senderAccount,
+        destinationBank: txn.senderBank,
+      };
+
+      proposals.push(newProposal);
+      reversals = [newProposal, ...reversals];
+
+      transactions = transactions.map((t) =>
+        t.id === txn!.id ? { ...t, status: 'approval' as FinancialStatus } : t
+      );
+      exceptions = exceptions.map((e) =>
+        e.id === exc.id ? { ...e, status: 'approval' as FinancialStatus } : e
+      );
+    }
+
+    saveStoredLiveItems(LIVE_REVERSALS_KEY, reversals);
+    saveStoredLiveItems(LIVE_TRANSACTIONS_KEY, transactions);
+    saveStoredLiveItems(LIVE_CUSTOMER_EXCEPTIONS_KEY, exceptions);
+
+    auditTrail = [
+      {
+        id: `aud-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        actorId: payload.proposedBy,
+        actorRole: 'ANALYST_MAKER',
+        action: 'BATCH_REVERSALS_PROPOSED',
+        entityType: 'REVERSAL',
+        entityId: `batch-${proposals.length}`,
+        prevHash: auditTrail[0]?.entryHash || '0000',
+        entryHash: Math.random().toString(36).substring(2, 18),
+        details: { count: proposals.length, reason: payload.reasonCode },
+        ipAddress: '127.0.0.1',
+      },
+      ...auditTrail,
+    ];
+    saveStoredLiveItems(LIVE_AUDIT_KEY, auditTrail);
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('smartreversal:new_reversal', { detail: proposals }));
+    }
+
+    return proposals;
   },
 
   // POST /reversals/{id}/authorize (Checker Step)
@@ -986,16 +1270,19 @@ export const apiClient = {
     };
 
     reversals = reversals.map((r) => (r.id === prop.id ? updated : r));
+    saveStoredLiveItems(LIVE_REVERSALS_KEY, reversals);
 
     // Update linked transaction
     transactions = transactions.map((t) =>
       t.id === prop.transactionId ? { ...t, status: updatedStatus, hasDiscrepancy: false } : t
     );
+    saveStoredLiveItems(LIVE_TRANSACTIONS_KEY, transactions);
 
     // Update linked exception if exists
     exceptions = exceptions.map((e) =>
-      e.transactionId === prop.transactionId ? { ...e, status: updatedStatus } : e
+      e.transactionId === prop.transactionId || e.reference === prop.reference ? { ...e, status: updatedStatus } : e
     );
+    saveStoredLiveItems(LIVE_CUSTOMER_EXCEPTIONS_KEY, exceptions);
 
     // Immutable Audit Trail
     auditTrail = [
@@ -1019,6 +1306,11 @@ export const apiClient = {
       },
       ...auditTrail,
     ];
+    saveStoredLiveItems(LIVE_AUDIT_KEY, auditTrail);
+
+    if (payload.decision === 'APPROVE') {
+      syncCustomerCaseResolved(updated);
+    }
 
     return updated;
   },
@@ -1089,8 +1381,17 @@ export const apiClient = {
         ...auditTrail,
       ];
 
+      if (payload.decision === 'APPROVE') {
+        syncCustomerCaseResolved(updated);
+      }
+
       updatedList.push(updated);
     }
+
+    saveStoredLiveItems(LIVE_REVERSALS_KEY, reversals);
+    saveStoredLiveItems(LIVE_TRANSACTIONS_KEY, transactions);
+    saveStoredLiveItems(LIVE_CUSTOMER_EXCEPTIONS_KEY, exceptions);
+    saveStoredLiveItems(LIVE_AUDIT_KEY, auditTrail);
 
     return updatedList;
   },
@@ -1699,12 +2000,19 @@ export const apiClient = {
     ];
   },
 
-  // Reset simulator
+  // Reset simulator / live storage
   resetSimulator() {
-    transactions = [...INITIAL_TRANSACTIONS];
-    exceptions = [...INITIAL_EXCEPTIONS];
-    investigations = [...INITIAL_INVESTIGATIONS];
-    reversals = [...INITIAL_REVERSALS];
-    auditTrail = [...INITIAL_AUDIT_TRAIL];
+    transactions = [];
+    exceptions = [];
+    investigations = [];
+    reversals = [];
+    auditTrail = [];
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(LIVE_TRANSACTIONS_KEY);
+      localStorage.removeItem(LIVE_CUSTOMER_EXCEPTIONS_KEY);
+      localStorage.removeItem(LIVE_INVESTIGATIONS_KEY);
+      localStorage.removeItem(LIVE_REVERSALS_KEY);
+      localStorage.removeItem(LIVE_AUDIT_KEY);
+    }
   },
 };
