@@ -54,18 +54,44 @@ export const S8CaseTracker: React.FC<S8CaseTrackerProps> = ({
             <span className="text-[22px] font-extrabold font-mono-financial text-[var(--text-primary)] block">
               {disputeCase.currency} {disputeCase.amount}
             </span>
-            <span className="text-[11px] font-semibold text-sky-800 bg-sky-50 px-2.5 py-0.5 rounded-full border border-sky-200 inline-block mt-0.5">
-              {disputeCase.statusLabel}
+            <span
+              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border inline-block mt-0.5 ${
+                disputeCase.status === 'VERIFIED_RESOLVED'
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300'
+                  : 'bg-sky-50 text-sky-800 border-sky-200'
+              }`}
+            >
+              {disputeCase.status === 'VERIFIED_RESOLVED' ? '✓ ' + disputeCase.statusLabel : disputeCase.statusLabel}
             </span>
           </div>
         </div>
 
         {/* Customer Safe Notice Box */}
-        <div className="p-4 rounded-xl bg-sky-50 border border-sky-200 text-[12px] text-sky-950 flex items-start gap-3">
-          <ShieldCheck className="w-5 h-5 text-sky-700 shrink-0 mt-0.5" />
+        <div
+          className={`p-4 rounded-xl border text-[12px] flex items-start gap-3 ${
+            disputeCase.status === 'VERIFIED_RESOLVED'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-950 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-100'
+              : 'bg-sky-50 border-sky-200 text-sky-950'
+          }`}
+        >
+          <ShieldCheck
+            className={`w-5 h-5 shrink-0 mt-0.5 ${
+              disputeCase.status === 'VERIFIED_RESOLVED' ? 'text-emerald-600' : 'text-sky-700'
+            }`}
+          />
           <div className="space-y-0.5">
-            <strong className="font-bold">Official Status Notice: </strong>
-            <p className="text-sky-900 leading-relaxed">{disputeCase.customerSafeStatusText}</p>
+            <strong className="font-bold">
+              {disputeCase.status === 'VERIFIED_RESOLVED' ? 'Issue Resolved: ' : 'Official Status Notice: '}
+            </strong>
+            <p
+              className={
+                disputeCase.status === 'VERIFIED_RESOLVED'
+                  ? 'text-emerald-900 dark:text-emerald-200 leading-relaxed font-medium'
+                  : 'text-sky-900 leading-relaxed'
+              }
+            >
+              {disputeCase.customerSafeStatusText}
+            </p>
           </div>
         </div>
       </div>
@@ -78,10 +104,10 @@ export const S8CaseTracker: React.FC<S8CaseTrackerProps> = ({
             <span>Bank Target Window</span>
           </span>
           <span className="text-[15px] font-extrabold font-mono-financial text-[var(--text-primary)] block">
-            {disputeCase.timeRemainingText}
+            {disputeCase.status === 'VERIFIED_RESOLVED' ? 'Resolution Complete' : disputeCase.timeRemainingText}
           </span>
           <p className="text-[11px] text-[var(--text-muted)]">
-            Target: {new Date(disputeCase.bankTargetDeadline).toLocaleTimeString()} WAT
+            {disputeCase.status === 'VERIFIED_RESOLVED' ? 'Closed by Bank Operations' : `Target: ${new Date(disputeCase.bankTargetDeadline).toLocaleTimeString()} WAT`}
           </p>
         </div>
 
@@ -91,10 +117,10 @@ export const S8CaseTracker: React.FC<S8CaseTrackerProps> = ({
             <span>CBN Regulatory Max</span>
           </span>
           <span className="text-[15px] font-extrabold font-mono-financial text-emerald-700 block">
-            Statutory Refund Mandate
+            {disputeCase.status === 'VERIFIED_RESOLVED' ? 'Statutory SLA Met' : 'Statutory Refund Mandate'}
           </span>
           <p className="text-[11px] text-[var(--text-muted)]">
-            Deadline: {new Date(disputeCase.regulatoryDeadline).toLocaleTimeString()} WAT
+            {disputeCase.status === 'VERIFIED_RESOLVED' ? 'Settled within mandated timeline' : `Deadline: ${new Date(disputeCase.regulatoryDeadline).toLocaleTimeString()} WAT`}
           </p>
         </div>
       </div>
@@ -111,7 +137,9 @@ export const S8CaseTracker: React.FC<S8CaseTrackerProps> = ({
               <span
                 className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 z-10 font-bold text-[11px] transition-all ${
                   hist.verified
-                    ? 'bg-sky-600 text-white shadow-xs'
+                    ? hist.stage === 'VERIFIED_RESOLVED'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-sky-600 text-white shadow-xs'
                     : 'bg-slate-100 text-slate-400 border border-slate-300'
                 }`}
               >
