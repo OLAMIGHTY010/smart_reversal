@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShieldAlert,
   CheckCircle2,
@@ -10,14 +10,43 @@ import { StatusBadge } from '../components/StatusBadge';
 import { StaleDataBanner } from '../components/StateBanners';
 import { ChartWrapper } from '../components/ChartWrapper';
 import { useApp } from '../context/AppContext';
-import { INITIAL_REVERSALS, INITIAL_EXCEPTIONS } from '../services/mockSimulatorData';
+import { apiClient } from '../services/apiClient';
+import type { ReversalProposal, FinancialException } from '../types/domain';
 
 export const DashboardView: React.FC = () => {
   const { setActiveView } = useApp();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [reversals, setReversals] = useState<ReversalProposal[]>([]);
+  const [exceptions, setExceptions] = useState<FinancialException[]>([]);
+
+  const loadLiveMetrics = () => {
+    apiClient.getReversals().then(setReversals).catch(() => {});
+    apiClient.getExceptions().then(setExceptions).catch(() => {});
+  };
+
+  useEffect(() => {
+    loadLiveMetrics();
+    const handleLiveSync = () => loadLiveMetrics();
+    window.addEventListener('smartreversal:new_exception', handleLiveSync);
+    window.addEventListener('smartreversal:new_reversal', handleLiveSync);
+    window.addEventListener('smartreversal:case_resolved', handleLiveSync);
+    return () => {
+      window.removeEventListener('smartreversal:new_exception', handleLiveSync);
+      window.removeEventListener('smartreversal:new_reversal', handleLiveSync);
+      window.removeEventListener('smartreversal:case_resolved', handleLiveSync);
+    };
+  }, []);
+
+  const pendingReversals = reversals.filter((r) => r.status === 'approval');
+  const totalPendingExposure = pendingReversals.reduce(
+    (sum, r) => sum + (Number(r.reversalAmount) || 0),
+    0
+  );
+  const activeExceptions = exceptions.filter((e) => e.status !== 'resolved');
 
   const handleRefresh = () => {
     setIsRefreshing(true);
+    loadLiveMetrics();
     setTimeout(() => setIsRefreshing(false), 600);
   };
 
@@ -60,13 +89,13 @@ export const DashboardView: React.FC = () => {
         <div className="p-4 bg-[var(--surface)] border border-[var(--surface-border)] rounded-md shadow-xs space-y-2">
           <div className="flex items-center justify-between text-[12px] text-[var(--text-muted)] font-medium">
             <span>Pending Maker-Checker</span>
-            <ShieldAlert className="w-4 h-4 text-purple-600" />
+            <ShieldAlert className="w-4 h-4 text-sky-600" />
           </div>
-          <div className="text-[26px] font-bold font-mono-financial text-purple-900">
-            {INITIAL_REVERSALS.length} Reversals
+          <div className="text-[26px] font-bold font-mono-financial text-[var(--text-primary)]">
+            {pendingReversals.length} Reversals
           </div>
           <div className="text-[12px] text-[var(--text-secondary)]">
-            Total Value: <strong className="font-mono-financial">₦195,000.00</strong>
+            Total Value: <strong className="font-mono-financial">₦{totalPendingExposure.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong>
           </div>
         </div>
 
@@ -77,10 +106,10 @@ export const DashboardView: React.FC = () => {
             <AlertOctagon className="w-4 h-4 text-rose-600" />
           </div>
           <div className="text-[26px] font-bold font-mono-financial text-rose-900">
-            {INITIAL_EXCEPTIONS.length} Flagged
+            {activeExceptions.length} Flagged
           </div>
           <div className="text-[12px] text-rose-700 font-medium">
-            1 Critical (Debit without Credit)
+            {activeExceptions.filter((e) => e.severity === 'CRITICAL').length} Critical ({activeExceptions.length} Active)
           </div>
         </div>
 
@@ -118,28 +147,34 @@ export const DashboardView: React.FC = () => {
               <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">
                 Dual-Control Approval Queue
               </h3>
-              <span className="text-[11px] font-mono-financial text-purple-800 bg-purple-100 px-1.5 py-0.2 rounded font-medium">
-                {INITIAL_REVERSALS.length} Pending
+              <span className="text-[11px] font-mono-financial text-sky-700 bg-sky-50 dark:bg-sky-950/40 border border-sky-200/50 px-1.5 py-0.2 rounded font-medium">
+                {pendingReversals.length} Pending
               </span>
             </div>
 
             <div className="divide-y divide-[var(--surface-border-subtle)] mt-2">
-              {INITIAL_REVERSALS.map((rev) => (
-                <div key={rev.id} className="py-2.5 space-y-1 text-[12px]">
-                  <div className="flex items-center justify-between">
-                    <strong className="font-mono-financial text-[var(--text-primary)]">
-                      {rev.reference}
-                    </strong>
-                    <span className="font-bold font-mono-financial text-purple-900">
-                      ₦{Number(rev.reversalAmount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-[var(--text-muted)]">
-                    <span>{rev.channel} • Maker: {rev.proposedBy.split(' ')[0]}</span>
-                    <StatusBadge status="approval" size="sm" />
-                  </div>
+              {pendingReversals.length === 0 ? (
+                <div className="py-6 text-center text-[12px] text-[var(--text-muted)]">
+                  No pending reversals awaiting dual-control authorization.
                 </div>
-              ))}
+              ) : (
+                pendingReversals.map((rev) => (
+                  <div key={rev.id} className="py-2.5 space-y-1 text-[12px]">
+                    <div className="flex items-center justify-between">
+                      <strong className="font-mono-financial text-[var(--text-primary)]">
+                        {rev.reference}
+                      </strong>
+                      <span className="font-bold font-mono-financial text-[var(--text-primary)]">
+                        ₦{Number(rev.reversalAmount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[var(--text-muted)]">
+                      <span>{rev.channel} • Maker: {rev.proposedBy.split(' ')[0]}</span>
+                      <StatusBadge status="approval" size="sm" />
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
