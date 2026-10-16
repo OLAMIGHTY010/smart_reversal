@@ -22,6 +22,37 @@ import { ToastContainer } from '../components/Toast';
 import type { Role } from '../types/domain';
 import { apiClient, type ServiceTierStatus } from '../services/apiClient';
 
+export interface PrimaryNavItem {
+  id: string;
+  label: string;
+  roles: string[];
+  badge?: string;
+  isSpecial?: boolean;
+}
+
+export interface GovernanceNavItem {
+  id: string;
+  label: string;
+  desc: string;
+}
+
+export const primaryNavItems: PrimaryNavItem[] = [
+  { id: 'dashboard', label: 'Dashboard', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
+  { id: 'exceptions', label: 'Exceptions & Triage', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'], badge: '4' },
+  { id: 'reversals', label: 'Maker-Checker Reversals', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'ADMIN'], badge: '2' },
+  { id: 'reconciliation', label: 'Reconciliation', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
+  { id: 'transactions', label: 'Transactions', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
+];
+
+export const governanceNavItems: GovernanceNavItem[] = [
+  { id: 'investigations', label: 'Investigations & AI Copilot', desc: 'Case telemetry and explainable assistant' },
+  { id: 'agent-intake', label: 'Branch / Agent Intake', desc: 'Internal complaint registration' },
+  { id: 'audit', label: 'Immutable Audit Trail', desc: 'Tamper-evident hash chain & logs' },
+  { id: 'rules-health', label: 'Rules & Integration Health', desc: 'Core switch telemetry and policy thresholds' },
+  { id: 'executive-reports', label: 'Executive Reports & Heatmap', desc: 'CBN compliance SLAs and volume heatmaps' },
+  { id: 'model-drift', label: 'ML Drift & Shadow Matrix', desc: 'Model telemetry and shadow scoring' },
+];
+
 export interface AppShellProps {
   children: React.ReactNode;
 }
@@ -68,23 +99,6 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
       clearInterval(interval);
     };
   }, []);
-
-  // Primary operational tabs (Clean, core workflows)
-  const primaryNavItems = [
-    { id: 'dashboard', label: 'Dashboard', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
-    { id: 'agent-intake', label: 'Agent Complaint Intake', roles: ['CONTACT_CENTRE_AGENT', 'BRANCH_AGENT', 'ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'ADMIN'], badge: 'Live' },
-    { id: 'reverseit', label: 'ReverseIt Customer Portal', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN', 'CONTACT_CENTRE_AGENT', 'BRANCH_AGENT'], isSpecial: true },
-    { id: 'transactions', label: 'Transactions', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
-    { id: 'reconciliation', label: 'Reconciliation', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
-    { id: 'exceptions', label: 'Exceptions', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'], badge: '4' },
-    { id: 'investigations', label: 'Investigations', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
-    { id: 'reversals', label: 'Maker-Checker Reversals', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'ADMIN'], badge: '2' },
-    { id: 'audit', label: 'Immutable Audit Trail', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
-    { id: 'rules-health', label: 'Rules & Integration Health', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
-    { id: 'executive-reports', label: 'Executive Reports & Heatmap', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
-    { id: 'model-drift', label: 'ML Drift & Shadow Matrix', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
-    { id: 'storybook', label: 'Design System & Storybook', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'], isSpecial: true },
-  ];
 
   const allowedPrimaryItems = primaryNavItems.filter((item) => item.roles.includes(role));
 
