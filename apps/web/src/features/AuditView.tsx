@@ -1,11 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Lock } from 'lucide-react';
 import { DataTable, type ColumnDef } from '../components/DataTable';
-import { INITIAL_AUDIT_TRAIL } from '../services/mockSimulatorData';
+import { apiClient } from '../services/apiClient';
 import type { AuditEvent } from '../types/domain';
 
 export const AuditView: React.FC = () => {
-  const [logs] = useState<AuditEvent[]>(() => INITIAL_AUDIT_TRAIL);
+  const [logs, setLogs] = useState<AuditEvent[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    apiClient.getAuditLogs().then((res) => {
+      if (isMounted) setLogs(res);
+    }).catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const columns: ColumnDef<AuditEvent>[] = [
     {
