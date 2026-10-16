@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   FolderOpen,
+  FileText,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { Button } from '../components/Button';
@@ -26,7 +27,6 @@ import { ExternalDependencyModal } from './investigations/ExternalDependencyModa
 import { CloseCaseModal } from './investigations/CloseCaseModal';
 import { useApp } from '../context/AppContext';
 import { apiClient } from '../services/apiClient';
-import { INITIAL_INVESTIGATIONS } from '../services/mockSimulatorData';
 import type {
   InvestigationCase,
   RootCause,
@@ -38,17 +38,15 @@ type CentreTab = 'TIMELINE' | 'EVIDENCE' | 'DUPLICATE_DIFF';
 export const InvestigationsView: React.FC = () => {
   const { role, addToast, setActiveView, setSelectedTransactionId } = useApp();
 
-  const [cases, setCases] = useState<InvestigationCase[]>(() => INITIAL_INVESTIGATIONS);
-  const [selectedCaseId, setSelectedCaseId] = useState<string>(
-    INITIAL_INVESTIGATIONS[0]?.id || ''
-  );
+  const [cases, setCases] = useState<InvestigationCase[]>([]);
+  const [selectedCaseId, setSelectedCaseId] = useState<string>('');
 
   useEffect(() => {
     let isMounted = true;
     apiClient.getInvestigations().then((invs) => {
-      if (isMounted && invs.length > 0) {
+      if (isMounted) {
         setCases(invs);
-        if (!selectedCaseId && invs[0]) {
+        if (invs[0] && !selectedCaseId) {
           setSelectedCaseId(invs[0].id);
         }
       }
@@ -56,22 +54,24 @@ export const InvestigationsView: React.FC = () => {
 
     const handleLiveDispute = () => {
       apiClient.getInvestigations().then((invs) => {
-        if (isMounted) setCases(invs);
+        if (isMounted) {
+          setCases(invs);
+          if (invs[0] && !selectedCaseId) {
+            setSelectedCaseId(invs[0].id);
+          }
+        }
       }).catch(() => {});
     };
 
     window.addEventListener('smartreversal:new_exception', handleLiveDispute);
+    window.addEventListener('smartreversal:case_resolved', handleLiveDispute);
     return () => {
       isMounted = false;
       window.removeEventListener('smartreversal:new_exception', handleLiveDispute);
+      window.removeEventListener('smartreversal:case_resolved', handleLiveDispute);
     };
-  }, []);
-  const [activeCentreTab, setActiveCentreTab] = useState<CentreTab>(() => {
-    const firstCase = INITIAL_INVESTIGATIONS[0];
-    return firstCase?.duplicateComparison && firstCase.exception.classificationCode === 'DUP001'
-      ? 'DUPLICATE_DIFF'
-      : 'TIMELINE';
-  });
+  }, [selectedCaseId]);
+  const [activeCentreTab, setActiveCentreTab] = useState<CentreTab>('TIMELINE');
   const [targetEvidenceId, setTargetEvidenceId] = useState<string | null>(null);
 
   // Notes
@@ -95,8 +95,14 @@ export const InvestigationsView: React.FC = () => {
 
   if (!activeCase) {
     return (
-      <div className="p-8 text-center text-[var(--text-muted)]">
-        No active investigation cases loaded.
+      <div className="p-12 text-center bg-[var(--surface)] border border-[var(--surface-border)] rounded-md space-y-3 max-w-xl mx-auto my-12 shadow-xs">
+        <FileText className="w-10 h-10 text-sky-600 mx-auto opacity-75" />
+        <h3 className="text-[16px] font-bold text-[var(--text-primary)]">
+          No Active Investigation Cases in Queue
+        </h3>
+        <p className="text-[13px] text-[var(--text-secondary)] leading-relaxed">
+          The investigation workspace is active and listening for live dispute intake reports and operational exception assignments.
+        </p>
       </div>
     );
   }
