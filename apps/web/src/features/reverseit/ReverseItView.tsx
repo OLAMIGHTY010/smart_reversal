@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ReverseItHeader } from './ReverseItHeader';
 import { S1ReportProblem } from './S1ReportProblem';
 import { S2PasteUpload } from './S2PasteUpload';
@@ -11,7 +11,6 @@ import { S8CaseTracker } from './S8CaseTracker';
 import { S9EscalationLadder } from './S9EscalationLadder';
 import { MyCasesView } from './MyCasesView';
 import {
-  INITIAL_CUSTOMER_CASES,
   REGULATORY_CLOCKS,
   SAMPLE_NIGERIAN_ALERTS,
 } from './reverseitData';
@@ -44,16 +43,57 @@ export const ReverseItView: React.FC = () => {
   );
   const CUSTOMER_SESSION_CASES_KEY = 'smartreversal_customer_my_cases';
 
-  // Customers see their own submitted cases; defaults to sample cases for exploration
+  // Customers see their own submitted cases
   const [cases, setCases] = useState<CustomerDisputeCase[]>(() => {
     try {
       const saved = localStorage.getItem(CUSTOMER_SESSION_CASES_KEY);
-      return saved ? JSON.parse(saved) : INITIAL_CUSTOMER_CASES;
+      return saved ? JSON.parse(saved) : [];
     } catch {
-      return INITIAL_CUSTOMER_CASES;
+      return [];
     }
   });
   const [selectedCase, setSelectedCase] = useState<CustomerDisputeCase | null>(null);
+
+  // Real-time synchronization when supervisor authorizes reversal
+  useEffect(() => {
+    const handleCaseResolved = (e: Event) => {
+      const customEvent = e as CustomEvent<{
+        reference?: string;
+        amount?: string;
+        currency?: string;
+        authorizedBy?: string;
+      }>;
+      const detail = customEvent.detail;
+
+      // Reload cases from localStorage
+      try {
+        const saved = localStorage.getItem(CUSTOMER_SESSION_CASES_KEY);
+        if (saved) {
+          const parsedCases: CustomerDisputeCase[] = JSON.parse(saved);
+          setCases(parsedCases);
+          if (selectedCase) {
+            const updatedSelected = parsedCases.find(
+              (c) => c.id === selectedCase.id || c.reference === selectedCase.reference
+            );
+            if (updatedSelected) setSelectedCase(updatedSelected);
+          }
+        }
+      } catch {
+        // silent
+      }
+
+      addToast({
+        type: 'success',
+        title: 'Dispute Resolved & Refund Settled!',
+        message: `Your dispute for ${detail?.reference || 'your transaction'} (${detail?.currency || 'NGN'} ${Number(detail?.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}) has been approved by the bank supervisor. Funds have been credited to your account!`,
+      });
+    };
+
+    window.addEventListener('smartreversal:case_resolved', handleCaseResolved);
+    return () => {
+      window.removeEventListener('smartreversal:case_resolved', handleCaseResolved);
+    };
+  }, [addToast, selectedCase]);
 
   // S1 -> S2
   const handleSelectIntakeMode = (mode: IntakeMode) => {
