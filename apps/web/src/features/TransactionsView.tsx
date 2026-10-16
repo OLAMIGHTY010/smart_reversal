@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ShieldAlert, Sparkles } from 'lucide-react';
 import { DataTable, type ColumnDef } from '../components/DataTable';
 import { SearchFilterBar, type SavedView } from '../components/SearchFilterBar';
@@ -9,12 +9,22 @@ import { MaskedField } from '../components/MaskedField';
 import { Timeline } from '../components/Timeline';
 import { Button } from '../components/Button';
 import { useApp } from '../context/AppContext';
-import { INITIAL_TRANSACTIONS } from '../services/mockSimulatorData';
+import { apiClient } from '../services/apiClient';
 import type { Transaction, Channel, FinancialStatus } from '../types/domain';
 
 export const TransactionsView: React.FC = () => {
   const { selectedTransactionId, setSelectedTransactionId, role, setActiveView, addToast } = useApp();
-  const [transactions] = useState<Transaction[]>(() => INITIAL_TRANSACTIONS);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    apiClient.getTransactions().then((txs) => {
+      if (isMounted) setTransactions(txs);
+    }).catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Filters
   const [query, setQuery] = useState('');
