@@ -1,16 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, X, ArrowRight } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { INITIAL_TRANSACTIONS } from '../services/mockSimulatorData';
+import { apiClient } from '../services/apiClient';
 import { StatusBadge } from '../components/StatusBadge';
+import type { Transaction } from '../types/domain';
 
 export const GlobalSearchModal: React.FC = () => {
   const { globalSearchOpen, setGlobalSearchOpen, setActiveView, setSelectedTransactionId } = useApp();
   const [searchTerm, setSearchTerm] = useState('');
+  const [liveTransactions, setLiveTransactions] = useState<Transaction[]>([]);
+
+  useEffect(() => {
+    if (globalSearchOpen) {
+      apiClient.getTransactions().then(setLiveTransactions).catch(() => {});
+    }
+  }, [globalSearchOpen]);
 
   if (!globalSearchOpen) return null;
 
-  const filtered = INITIAL_TRANSACTIONS.filter((t) => {
+  const filtered = liveTransactions.filter((t) => {
     if (!searchTerm.trim()) return true;
     const q = searchTerm.toLowerCase();
     return (
