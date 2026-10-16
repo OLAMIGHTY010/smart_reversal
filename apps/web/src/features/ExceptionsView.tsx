@@ -15,6 +15,7 @@ import {
   ChevronDown,
   ChevronUp,
   X,
+  ShieldAlert,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { Button } from '../components/Button';
@@ -29,7 +30,6 @@ import { ConflictDialog } from './exceptions/ConflictDialog';
 import { KeyboardShortcutsModal } from './exceptions/KeyboardShortcutsModal';
 import { useApp } from '../context/AppContext';
 import { apiClient } from '../services/apiClient';
-import { INITIAL_EXCEPTIONS } from '../services/mockSimulatorData';
 import type {
   FinancialException,
   FinancialStatus,
@@ -51,8 +51,8 @@ type SortOrder = 'asc' | 'desc';
 export const ExceptionsView: React.FC = () => {
   const { role, addToast, setSelectedTransactionId, setActiveView } = useApp();
 
-  // Core exceptions list
-  const [exceptions, setExceptions] = useState<FinancialException[]>(() => INITIAL_EXCEPTIONS);
+  // Core exceptions list - starts clean and populates with live items from API/dispute intake
+  const [exceptions, setExceptions] = useState<FinancialException[]>([]);
   const [selectedExceptionId, setSelectedExceptionId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [focusedRowIndex, setFocusedRowIndex] = useState<number>(0);
@@ -502,6 +502,61 @@ export const ExceptionsView: React.FC = () => {
     setExceptions((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
   };
 
+  const isMaker = role === 'ANALYST_MAKER' || role === 'ADMIN';
+
+  const handleBatchProposeReversals = async () => {
+    if (checkedIds.length === 0) return;
+    const isConfirmed = window.confirm(
+      `Submit batch reversal proposals for ${checkedIds.length} verified exceptions to the Supervisor Dual-Control Queue?`
+    );
+    if (!isConfirmed) return;
+
+    try {
+      const proposals = await apiClient.batchProposeReversals({
+        exceptionIds: checkedIds,
+        proposedBy: `Analyst (${role})`,
+        reasonCode: 'BATCH_AI_VERIFIED_DISPUTE',
+        justification: `AI tri-party telemetry verified switch timeout with core ledger debit across ${checkedIds.length} claims.`,
+      });
+
+      addToast({
+        type: 'success',
+        title: 'Batch Reversals Proposed',
+        message: `Successfully queued ${proposals.length} reversal proposals for supervisor dual-control authorization.`,
+      });
+
+      setCheckedIds([]);
+      const latest = await apiClient.getExceptions();
+      setExceptions(latest);
+    } catch (err: unknown) {
+      addToast({
+        type: 'error',
+        title: 'Batch Proposal Failed',
+        message: (err as Error)?.message || 'Could not queue batch reversals.',
+      });
+    }
+  };
+
+  const selectAiVerifiedOnly = () => {
+    const verifiedIds = exceptions
+      .filter((e) => e.modelConfidence >= 90 && e.status !== 'resolved' && e.status !== 'approval')
+      .map((e) => e.id);
+    if (verifiedIds.length === 0) {
+      addToast({
+        type: 'info',
+        title: 'No Pending AI-Verified Claims',
+        message: 'No exceptions currently meet the ≥90% AI verification threshold.',
+      });
+      return;
+    }
+    setCheckedIds(verifiedIds);
+    addToast({
+      type: 'info',
+      title: 'AI High-Confidence Filter Applied',
+      message: `Selected ${verifiedIds.length} exceptions verified with ≥90% AI confidence across NIBSS switch logs.`,
+    });
+  };
+
   // Reload action for conflict or simulated new items
   const handleReload = async () => {
     setIsLoading(true);
@@ -744,6 +799,18 @@ export const ExceptionsView: React.FC = () => {
             <kbd className="text-[10px] font-mono-financial">?</kbd>
           </button>
 
+          {/* AI-Verified Fast Selector */}
+          {exceptions.some((e) => e.modelConfidence >= 90 && e.status !== 'resolved' && e.status !== 'approval') && (
+            <Button
+              size="xs"
+              variant="secondary"
+              onClick={selectAiVerifiedOnly}
+              leftIcon={<Sparkles className="w-3 h-3 text-sky-600" />}
+            >
+              Select AI-Verified (≥90%)
+            </Button>
+          )}
+
           {/* CSV Export */}
           <Button
             size="xs"
@@ -758,7 +825,7 @@ export const ExceptionsView: React.FC = () => {
 
       {/* Bulk Action Bar (Visible when rows checked) */}
       {checkedIds.length > 0 && (
-        <div className="px-4 py-2 bg-sky-50 border-b border-sky-300 flex items-center justify-between text-[12px] text-sky-950">
+        <div className="px-4 py-2 bg-sky-50 border-b border-sky-300 flex items-center justify-between text-[12px] text-sky-950 animate-in fade-in">
           <div className="flex items-center gap-2">
             <span className="font-bold">{checkedIds.length} exceptions selected</span>
             <button
@@ -770,6 +837,16 @@ export const ExceptionsView: React.FC = () => {
             </button>
           </div>
           <div className="flex items-center gap-2">
+            {isMaker && (
+              <Button
+                size="xs"
+                variant="primary"
+                onClick={handleBatchProposeReversals}
+                leftIcon={<ShieldAlert className="w-3.5 h-3.5" />}
+              >
+                Batch Propose Reversals ({checkedIds.length})
+              </Button>
+            )}
             <Button
               size="xs"
               variant="secondary"
@@ -837,10 +914,12 @@ export const ExceptionsView: React.FC = () => {
             <div className="p-12 text-center space-y-3 my-auto">
               <CheckCircle2 className="w-10 h-10 text-emerald-600 mx-auto opacity-80" />
               <h3 className="text-[15px] font-bold text-[var(--text-primary)]">
-                No Exceptions Match Active Filters
+                {exceptions.length === 0 ? 'No Exceptions in Live Queue' : 'No Exceptions Match Active Filters'}
               </h3>
               <p className="text-[13px] text-[var(--text-secondary)] max-w-md mx-auto">
-                {activeFilterCount > 0
+                {exceptions.length === 0
+                  ? 'All operational transaction streams and customer queues are currently balanced. The pipeline is active and listening for live customer dispute filings and switch break events.'
+                  : activeFilterCount > 0
                   ? `Your active filters (${activeFilterCount}) currently exclude all records. Try clearing filters to view pending exceptions.`
                   : 'All transactions currently balance with no outstanding exceptions or anomalies.'}
               </p>
